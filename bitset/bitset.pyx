@@ -2,6 +2,7 @@
 
 from bitset cimport *
 from cython.operator cimport dereference as deref
+from libcpp.iterator cimport back_inserter
 
 cdef class Bitset:
     cdef:
@@ -27,3 +28,13 @@ cdef class Bitset:
 
     def is_subset_of(self, Bitset other):
         return self._this.is_subset_of(deref(other._this))# example.pyx
+
+    def to_int_arr(self):
+        cdef size_t num_blocks = self._this.num_blocks()
+        cdef vector[unsigned int] blocks
+
+        blocks.reserve(num_blocks)
+        to_block_range(deref(self._this), back_inserter(blocks))
+
+        # Convert to Python list
+        return [<unsigned int> blocks[i] for i in range(num_blocks)]

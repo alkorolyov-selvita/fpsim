@@ -22,6 +22,10 @@ cdef extern from "<boost/dynamic_bitset.hpp>" namespace "boost":
         bint is_proper_subset_of(dynamic_bitset[T]&)
         bint intersects(dynamic_bitset[T]& a)
 
+        size_t num_blocks() nogil
+        void append(T block) nogil
+
+
     # This function is templated, so will automatically work.
     cdef void to_string(dynamic_bitset[size_t], string s)
 

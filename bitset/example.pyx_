@@ -1,0 +1,15 @@
+from bitset cimport Bitset
+
+def example_usage():
+    cdef Bitset a = Bitset(10)
+    cdef Bitset b = Bitset(10)
+
+    a.set(1)
+    b.set(1)
+    b.set(5)
+
+    cdef Bitset result = a & b
+
+    print(a)
+    print(b)
+    print(result)
