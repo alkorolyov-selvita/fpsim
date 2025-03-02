@@ -32,6 +32,7 @@ cdef class Bitset:
     def to_int_arr(self):
         cdef size_t num_blocks = self._this.num_blocks()
         cdef vector[unsigned int] blocks
+        # cdef array128 blocks
 
         blocks.reserve(num_blocks)
         to_block_range(deref(self._this), back_inserter(blocks))

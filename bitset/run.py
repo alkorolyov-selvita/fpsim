@@ -13,10 +13,10 @@ if __name__ == '__main__':
     print(a or b)
     print(a and b)
 
-    b = Bitset(128)
-    b.set(0)
-    b.set(64)
+    fps = Bitset(1024)
+    fps.set(0)
+    fps.set(64)
     # b.set()
-    print(b)
-    print(b.to_int_arr())
+    # print(b)
+    print(fps.to_int_arr())
 
