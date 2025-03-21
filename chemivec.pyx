@@ -40,7 +40,7 @@ cdef void print_bitvec_ptr(ExplicitBitVect* v):
         printf("%d", v.getBit(i))
     printf("\n")
 
-cdef double jaccard_sim(ExplicitBitVect * v1, ExplicitBitVect * v2):
+cdef double jaccard_sim_double(ExplicitBitVect * v1, ExplicitBitVect * v2):
     cdef ExplicitBitVect intersection = deref(v1) & deref(v2)  # AND operation
     cdef unsigned int intersection_count = intersection.getNumOnBits()
     cdef unsigned int union_count = (deref(v1).getNumOnBits()
@@ -56,7 +56,7 @@ cdef double jaccard_sim(ExplicitBitVect * v1, ExplicitBitVect * v2):
     return intersection_count / union_count
 
 
-cdef float jaccard_sim_float(ExplicitBitVect * v1, ExplicitBitVect * v2) nogil:
+cdef inline float jaccard_sim_float(ExplicitBitVect * v1, ExplicitBitVect * v2) nogil:
     cdef unsigned int u_count, i_count
     i_count = (v1[0] & v2[0]).getNumOnBits()
     u_count = v1[0].getNumOnBits() + v2[0].getNumOnBits() - i_count
@@ -164,6 +164,7 @@ def tanimoto_similarity_matrix(
     for i in range(n):
         py_obj1 = <PyObject*>arr_np1[i]
         c_objects1[i] = extract_bitvec_ptr(py_obj1)()
+        # printf("%d\n",&c_objects1[i])
 
     # Extract C pointers from the Python objects for the second array
     cdef cnp.ndarray arr_np2 = fps_array2
@@ -189,250 +190,6 @@ def tanimoto_similarity_matrix(
     return res
 
 
-cdef float max_arr(float[:] a) nogil:
-    cdef int i
-    cdef float max_val = a[0]
-    cdef int n = a.shape[0]
-    for i in range(1, n):
-        if a[i] > max_val:
-            max_val = a[i]
-    return max_val
-
-def tanimoto_max_sim(
-        arr1: pd.Series | np.ndarray,
-        arr2: pd.Series | np.ndarray,
-        n_jobs: int = -1,
-) -> np.ndarray[1, np.float32]:
-    arr1 = arr1.values if isinstance(arr1, pd.Series) else arr1
-    arr2 = arr2.values if isinstance(arr2, pd.Series) else arr2
-
-    # check input type
-    if not isinstance(arr1, np.ndarray) or not isinstance(arr2, np.ndarray):
-        raise TypeError(f'Expected numpy arrays, got {type(arr1)} {type(arr2)}')
-
-    # check array dims
-    if arr1.ndim != 1 or arr2.ndim != 1:
-        raise ValueError('Expected 1D arrays')
-
-    # check array content
-    v1, v2 = arr1[0], arr2[0]
-    if not isinstance(v1, PyExplicitBitVect) or not isinstance(v2, PyExplicitBitVect):
-        raise TypeError(f'ExplicitBitVect expected, got {type(v1)} {type(v2)}')
-
-    n_jobs = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
-
-    cdef int i, j, batch_idx
-    cdef int n = arr1.shape[0]
-    cdef int m = arr2.shape[0]
-    cdef int n_jobs_c = n_jobs
-
-    # Allocate memory for C pointers for both arrays
-    cdef ExplicitBitVect** c_bitvecs1 = <ExplicitBitVect**>malloc(n * sizeof(ExplicitBitVect*))
-    cdef ExplicitBitVect** c_bitvecs2 = <ExplicitBitVect**>malloc(m * sizeof(ExplicitBitVect*))
-
-    # Extract C pointers from the Python objects for the first array
-    cdef cnp.ndarray arr_np1 = arr1
-    for i in range(n):
-        py_obj1 = <PyObject*>arr_np1[i]
-        c_bitvecs1[i] = extract_bitvec_ptr(py_obj1)()
-
-    # Extract C pointers from the Python objects for the second array
-    cdef cnp.ndarray arr_np2 = arr2
-    for i in range(m):
-        py_obj2 = <PyObject*>arr_np2[i]
-        c_bitvecs2[i] = extract_bitvec_ptr(py_obj2)()
-
-    # Allocate a NumPy array for the result array of shape n
-    res = np.empty(n, dtype=np.float32)
-    cdef float[:] res_view = res
-    tmp = np.empty((n_jobs, m), dtype=np.float32)
-    cdef float[:, :] tmp_view = tmp
-    cdef int tid
-
-
-    with nogil, parallel(num_threads=n_jobs_c):
-        # local_buf = <float *> malloc(sizeof(float) * n_jobs_c * m)
-        # if local_buf is NULL:
-        #     abort()
-
-        # tmp_view = local_buf
-        # Compute pairwise Jaccard similarities (asymmetric matrix)
-        for i in prange(n, schedule='dynamic'):
-            tid = threadid()
-            for j in range(m):
-                tmp_view[tid, j] = jaccard_sim_float(c_bitvecs1[i], c_bitvecs2[j])
-                res_view[i] = max_arr(tmp_view[tid])
-
-        # free(local_buf)
-    return res
-
-
-def calc_rmsd_float(arr: np.ndarray, ref_arr: np.ndarray):
-    cdef int n = arr.shape[0]
-    cdef int m = ref_arr.shape[0]
-
-    # Allocate a NumPy array for the result (RMSD values)
-    cdef cnp.ndarray[cnp.float32_t, ndim=1] rmsd_values = np.zeros(n, dtype=np.float32)
-    cdef float[:] rmsd_vals_view = rmsd_values
-
-    cdef int i, j
-    cdef float diff
-    cdef float[:] arr_view = arr
-    cdef float[:] ref_arr_view = ref_arr
-    cdef float* local_buf
-
-    # Compute the RMSD for each value in arr compared to ref_arr
-    for i in prange(n, nogil=True):
-    # for i in range(n):
-        local_buf = <float*>calloc(1, sizeof(float))
-        if local_buf is NULL:
-            abort()
-        for j in range(m):
-            diff = arr_view[i] - ref_arr_view[j]
-            local_buf[0] += diff ** 2
-        rmsd_vals_view[i] = sqrt(local_buf[0] / m)
-        free(local_buf)
-    return rmsd_values
-
-def calc_rmsd_double(arr, ref_arr):
-    cdef int n = arr.shape[0]
-    cdef int m = ref_arr.shape[0]
-
-    # Allocate a NumPy array for the result (RMSD values)
-    cdef cnp.ndarray[cnp.float64_t, ndim=1] rmsd_values = np.zeros(n, dtype=np.float64)
-    cdef double[:] rmsd_vals_view = rmsd_values
-
-    cdef int i, j
-    cdef double diff
-    cdef double[:] arr_view = arr
-    cdef double[:] ref_arr_view = ref_arr
-    cdef double* local_buf
-
-    # Compute the RMSD for each value in arr compared to ref_arr
-    for i in prange(n, nogil=True):
-    # for i in range(n):
-        local_buf = <double*>calloc(1, sizeof(double))
-        if local_buf is NULL:
-            abort()
-        for j in range(m):
-            diff = arr_view[i] - ref_arr_view[j]
-            local_buf[0] += diff ** 2
-        rmsd_vals_view[i] = sqrt(local_buf[0] / m)
-        free(local_buf)
-    return rmsd_values
-
-def calc_cross_rmsd(arr: pd.Series | np.ndarray, ref_arr: pd.Series | np.ndarray) -> np.ndarray[1, float]:
-    """
-    Computes the RMSD (Root Mean Square Deviation) for each value in arr compared to ref_arr.
-
-    Parameters:
-        arr (pd.Series or np.ndarray): The first array of real numbers.
-        ref_arr (pd.Series or np.ndarray): The second array of real numbers.
-
-    Returns:
-        np.ndarray: A 1D NumPy array containing the RMSD for each value in arr with respect to ref_arr.
-    """
-    # Ensure inputs are numpy arrays if they are pandas Series
-    if isinstance(arr, pd.Series):
-        arr = arr.values
-    if isinstance(ref_arr, pd.Series):
-        ref_arr = ref_arr.values
-    if arr.dtype == np.float64 and ref_arr.dtype == np.float64:
-        return calc_rmsd_double(arr, ref_arr)
-    elif arr.dtype == np.float32 and ref_arr.dtype == np.float32:
-        return  calc_rmsd_float(arr, ref_arr)
-    else:
-        raise TypeError(f'{arr.dtype} or {ref_arr.dtype} are not supported')
-
-def calc_cross_diff_float32(arr: np.ndarray, ref_arr: np.ndarray, n_jobs=-1):
-    cdef long n = arr.shape[0]
-    cdef long m = ref_arr.shape[0]
-    cdef long i, j
-    cdef long n_jobs_cy = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
-
-    res = np.empty((n, m), dtype=np.float32)
-    cdef float[:] arr_view = arr
-    cdef float[:] ref_arr_view = ref_arr
-    cdef float[:, :] res_view = res
-
-    # for i in prange(n, nogil=True, schedule='dynamic', chunksize=2048, num_threads=n_jobs_cy):
-    for i in prange(n, nogil=True, schedule='static', num_threads=n_jobs_cy):
-    # for i in range(n):
-        for j in range(m):
-            res_view[i, j] = fabs(arr_view[i] - ref_arr_view[j])
-    return res
-
-def calc_cross_diff_float64(arr, ref_arr, n_jobs=-1):
-    cdef long n = arr.shape[0]
-    cdef long m = ref_arr.shape[0]
-    cdef long i, j
-    cdef long n_jobs_cy = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
-
-    res = np.empty((n, m), dtype=np.float64)
-    cdef double[:] arr_view = arr
-    cdef double[:] ref_arr_view = ref_arr
-    cdef double[:, :] res_view = res
-
-    # for i in prange(n, nogil=True, schedule='dynamic', chunksize=2048, num_threads=n_jobs_cy):
-    for i in prange(n, nogil=True, schedule='static', num_threads=n_jobs_cy):
-    # for i in range(n):
-        for j in range(m):
-            res_view[i, j] = fabs(arr_view[i] - ref_arr_view[j])
-
-    return res
-
-def calc_cross_diff_int32(arr, ref_arr, n_jobs=-1):
-    cdef int n = arr.shape[0]
-    cdef int m = ref_arr.shape[0]
-    cdef int i, j
-    cdef int n_jobs_cy = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
-
-    res = np.empty((n, m), dtype=np.int32)
-    cdef int[:] arr_view = arr
-    cdef int[:] ref_arr_view = ref_arr
-    cdef int[:, :] res_view = res
-
-    # for i in prange(n, nogil=True, schedule='dynamic', chunksize=2048, num_threads=n_jobs_cy):
-    for i in prange(n, nogil=True, schedule='static', num_threads=n_jobs_cy):
-    # for i in range(n):
-        for j in range(m):
-            res_view[i, j] = abs(arr_view[i] - ref_arr_view[j])
-    return res
-
-def calc_cross_diff_int64(arr, ref_arr, n_jobs=-1):
-    cdef int n = arr.shape[0]
-    cdef int m = ref_arr.shape[0]
-    cdef int i, j
-    cdef int n_jobs_cy = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
-
-    res = np.empty((n, m), dtype=np.int64)
-    cdef long[:] arr_view = arr
-    cdef long[:] ref_arr_view = ref_arr
-    cdef long[:, :] res_view = res
-
-    # for i in prange(n, nogil=True, schedule='dynamic', chunksize=2048, num_threads=n_jobs_cy):
-    for i in prange(n, nogil=True, schedule='static', num_threads=n_jobs_cy):
-    # for i in range(n):
-        for j in range(m):
-            res_view[i, j] = abs(arr_view[i] - ref_arr_view[j])
-    return res
-
-
-
-def calc_cross_diff(arr, ref_arr, n_jobs=-1):
-    if isinstance(arr, pd.Series):
-        arr = arr.values
-    if isinstance(ref_arr, pd.Series):
-        ref_arr = ref_arr.values
-
-    if arr.dtype == np.float64 and ref_arr.dtype == np.float64:
-        return calc_cross_diff_float64(arr, ref_arr, n_jobs=n_jobs)
-    elif arr.dtype == np.float32 and ref_arr.dtype == np.float32:
-        return calc_cross_diff_float32(arr, ref_arr, n_jobs=n_jobs)
-    elif arr.dtype == np.int32 and ref_arr.dtype == np.int32:
-        return calc_cross_diff_int32(arr, ref_arr, n_jobs=n_jobs)
-    else:
-        raise TypeError(f'{arr.dtype} or {ref_arr.dtype} are not supported')
 
 
 def run_tests():
@@ -486,7 +243,7 @@ def run_tests():
     print('Logic OR')
     print_bitvec(deref(bit_vec_ptr1) | deref(bit_vec_ptr2))
 
-    printf('Jaccard sim %.3f\n', jaccard_sim(bit_vec_ptr1, bit_vec_ptr2))
+    printf('Jaccard sim %.3f\n', jaccard_sim_double(bit_vec_ptr1, bit_vec_ptr2))
 
     smiles = pd.Series(['CC', 'CO', 'CN', 'CF'])
     mols = smiles.apply(MolFromSmiles)
@@ -505,33 +262,3 @@ def run_tests():
 
     arr = tanimoto_similarity_matrix(fps[:3], fps[2:])
     print(arr)
-
-    res1 = tanimoto_max_sim(fps[:3], fps[2:])
-    res2 = np.max(arr, axis=1)
-    assert np.allclose(res1, res2)
-
-    print('RMSD')
-    a1 = np.random.rand(8).astype(np.float32)
-    a2 = np.random.rand(12).astype(np.float32)
-    print(calc_cross_rmsd(a1, a2).shape, a1.shape)
-    print(np.round(calc_cross_rmsd(a1, a2), 2))
-
-
-
-
-    a1 = np.array([1, 2], dtype=np.float32)
-    a2 = np.array([1, 2, 3], dtype=np.float32)
-    assert np.allclose(calc_cross_diff_float32(a1, a2), calc_cross_diff_np(a1, a2))
-
-    a1 = np.array([1, 2], dtype=np.float64)
-    a2 = np.array([1, 2, 3], dtype=np.float64)
-    assert np.allclose(calc_cross_diff_float64(a1, a2), calc_cross_diff_np(a1, a2))
-
-    a1 = np.array([1, 2], dtype=np.int32)
-    a2 = np.array([1, 2, 3], dtype=np.int32)
-    assert np.all(calc_cross_diff_int32(a1, a2) == calc_cross_diff_np(a1, a2))
-
-    a1 = np.array([1, 2], dtype=np.int64)
-    a2 = np.array([1, 2, 3], dtype=np.int64)
-    assert np.all(calc_cross_diff_int64(a1, a2) == calc_cross_diff_np(a1, a2))
-
