@@ -6,6 +6,7 @@ cdef extern from "<boost/dynamic_bitset.hpp>" namespace "boost":
     # We're wrapping a Template class from boost.
     cdef cppclass dynamic_bitset[T]:
         dynamic_bitset(size_t) nogil
+        dynamic_bitset(const string& s) except +
         void resize(size_t)
         void set(size_t)
         void reset(size_t)
@@ -38,6 +39,7 @@ cdef extern from "rdkit/DataStructs/ExplicitBitVect.h":
     cdef cppclass ExplicitBitVect:
         ExplicitBitVect() nogil
         ExplicitBitVect(unsigned int size) nogil
+        ExplicitBitVect(const char *, const unsigned int);
 
         unsigned int getNumBits() nogil const
         unsigned int getNumOnBits() nogil const

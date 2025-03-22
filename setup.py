@@ -24,7 +24,7 @@ rdkit_include_path = os.path.join(conda_base, 'include', 'rdkit')
 extensions = [
     Extension(
         name="fpsim",
-        sources=["*.pyx"],  # Replace with your actual Cython file name
+        sources=["fpsim.pyx"],  # Replace with your actual Cython file name
         extra_compile_args=[
             '-O3',
             '-fopenmp',
@@ -55,8 +55,12 @@ extensions = [
 setup(
     name="fpsim",
     ext_modules=cythonize(extensions, language_level = "3str"),
-    define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
 )
 
+
+
+
 from fpsim import run_tests
+# from libfpsim import test_tanimoto_sim_matrix
+
 run_tests()

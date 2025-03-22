@@ -5,15 +5,16 @@ from typing import Dict, Any
 cimport cython
 from cython.operator cimport dereference as deref
 from cython.parallel import prange, threadid, parallel
-cimport numpy as cnp
+cimport numpy as np
 cimport openmp
-cnp.import_array()
+np.import_array()
 
 from libc.stdio cimport printf
 from libc.stdlib cimport malloc, free, abort, calloc, abs
 from libc.math cimport sqrt, fabs
 from cpython.mem cimport PyMem_Malloc, PyMem_Realloc, PyMem_Free
 from libcpp cimport bool as bool_t
+from libcpp.string cimport string
 
 import numpy as np
 import pandas as pd
@@ -67,7 +68,7 @@ cdef inline float jaccard_sim_float(ExplicitBitVect * v1, ExplicitBitVect * v2) 
     return i_count / u_count
 
 
-# cdef void compute_pairwise_jaccard_similarities(cnp.ndarray[cnp.float32_t, ndim=2] jaccard_matrix, ExplicitBitVect** c_objects, int n):
+# cdef void compute_pairwise_jaccard_similarities(np.ndarray[np.float32_t, ndim=2] jaccard_matrix, ExplicitBitVect** c_objects, int n):
 #     for i in range(n - 1):
 #         for j in range(i + 1, n):  # Only compute the upper triangle
 #             jaccard_matrix[i, j] = jaccard_sim_float(c_objects[i], c_objects[j])
@@ -77,7 +78,7 @@ cdef inline float jaccard_sim_float(ExplicitBitVect * v1, ExplicitBitVect * v2) 
 def tanimoto_similarity_matrix_square(
         fps_array: pd.Series | np.ndarray,
         n_jobs: int = -1,
-) -> np.ndarray[2, np.float32]:
+):
     """
     Computes the Jaccard similarity matrix for a pandas.Series of ExplicitBitVect objects.
 
@@ -97,13 +98,13 @@ def tanimoto_similarity_matrix_square(
     # cdef ExplicitBitVect** c_objects = <ExplicitBitVect**>PyMem_Malloc(n * sizeof(ExplicitBitVect*))
 
     # Extract C pointers from the Python objects
-    cdef cnp.ndarray arr_np = fps_array
+    cdef np.ndarray arr_np = fps_array
     for i in range(n):
         py_obj = <PyObject*>arr_np[i]
         c_objects[i] = extract_bitvec_ptr(py_obj)()
 
     # Allocate a NumPy array for the result
-    cdef cnp.ndarray[cnp.float32_t, ndim=2] jaccard_matrix = np.zeros((n, n), dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=2] jaccard_matrix = np.zeros((n, n), dtype=np.float32)
     np.fill_diagonal(jaccard_matrix, 1.0)
 
     # compute_pairwise_jaccard_similarities(jaccard_matrix, c_objects, n)
@@ -123,9 +124,9 @@ def tanimoto_similarity_matrix_square(
 
 def tanimoto_similarity_matrix(
         fps_array1: pd.Series | np.ndarray,
-        fps_array2: pd.Series | np.ndarray = None,
+        fps_array2: pd.Series | np.ndarray,
         n_jobs: int = -1,
-) -> np.ndarray[2, np.float32]:
+):
     """
     Computes the Jaccard similarity matrix for two pandas.Series of ExplicitBitVect objects.
 
@@ -137,8 +138,6 @@ def tanimoto_similarity_matrix(
     Returns:
         np.ndarray: A 2D NumPy array with shape (n, m), containing pairwise Jaccard similarities.
     """
-    if fps_array2 is None:
-        return tanimoto_similarity_matrix_square(fps_array1, n_jobs)
 
     # Ensure inputs are numpy arrays if they are pandas Series
     if isinstance(fps_array1, pd.Series):
@@ -156,48 +155,54 @@ def tanimoto_similarity_matrix(
     cdef int n_jobs_c = min(n_jobs, mp.cpu_count()) if n_jobs > 0 else mp.cpu_count()
 
     # Allocate memory for C pointers for both arrays
-    cdef ExplicitBitVect** c_objects1 = <ExplicitBitVect**>malloc(n * sizeof(ExplicitBitVect*))
-    cdef ExplicitBitVect** c_objects2 = <ExplicitBitVect**>malloc(m * sizeof(ExplicitBitVect*))
+    cdef ExplicitBitVect** bit_vecs1 = <ExplicitBitVect**>malloc(n * sizeof(ExplicitBitVect*))
+    cdef ExplicitBitVect** bit_vecs2 = <ExplicitBitVect**>malloc(m * sizeof(ExplicitBitVect*))
 
     # Extract C pointers from the Python objects for the first array
-    cdef cnp.ndarray arr_np1 = fps_array1
+    cdef np.ndarray arr_np1 = fps_array1
     for i in range(n):
         py_obj1 = <PyObject*>arr_np1[i]
-        c_objects1[i] = extract_bitvec_ptr(py_obj1)()
+        bit_vecs1[i] = extract_bitvec_ptr(py_obj1)()
         # printf("%d\n",&c_objects1[i])
 
     # Extract C pointers from the Python objects for the second array
-    cdef cnp.ndarray arr_np2 = fps_array2
+    cdef np.ndarray arr_np2 = fps_array2
     for i in range(m):
         py_obj2 = <PyObject*>arr_np2[i]
-        c_objects2[i] = extract_bitvec_ptr(py_obj2)()
+        bit_vecs2[i] = extract_bitvec_ptr(py_obj2)()
 
     # Allocate a NumPy array for the result (asymmetric matrix)
-    res = np.zeros((n, m), dtype=np.float32)
-    cdef float[:, :] res_view = res
+    cdef np.ndarray[np.float32_t, ndim=2] res = np.zeros((n, m), dtype=np.float32)
 
-    # cdef cnp.ndarray[cnp.float32_t, ndim=2] jaccard_matrix = np.zeros((n, m), dtype=np.float32)
+    # cdef np.ndarray[np.float32_t, ndim=2] jaccard_matrix = np.zeros((n, m), dtype=np.float32)
 
     # Compute pairwise Jaccard similarities (asymmetric matrix)
     for i in prange(n, nogil=True, schedule='dynamic', num_threads=n_jobs_c):
         for j in range(m):  # No symmetry, compute all pairs
-            res_view[i, j] = jaccard_sim_float(c_objects1[i], c_objects2[j])
+            res[i, j] = jaccard_sim_float(bit_vecs1[i], bit_vecs2[j])
 
     # Free the allocated C pointers
-    free(c_objects1)
-    free(c_objects2)
+    free(bit_vecs1)
+    free(bit_vecs2)
 
     return res
 
 
 
-
 def run_tests():
-    cdef string s
+    cdef string bitset_str
     cdef bitset_t* bitset_cy = new bitset_t(4)
     bitset_cy.set(1)
-    to_string(deref(bitset_cy), s)
+    to_string(bitset_cy[0], bitset_str)
+    print('bitset', bitset_str)
     # printf("%s\n", s.c_str())
+
+
+    s = string(b"010101")
+    bitset_cy = new bitset_t(s)
+    to_string(bitset_cy[0], bitset_str)
+    print('bitset from string:', bitset_str)
+
 
     cdef ExplicitBitVect u = ExplicitBitVect(4)
     cdef ExplicitBitVect v = ExplicitBitVect(4)
@@ -262,3 +267,5 @@ def run_tests():
 
     arr = tanimoto_similarity_matrix(fps[:3], fps[2:])
     print(arr)
+
+

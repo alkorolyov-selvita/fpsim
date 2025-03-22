@@ -12,6 +12,9 @@ dependencies:
   - libboost-python=1.84.0
   - libboost-headers=1.84.0
   - cython=3.0.11
+  - cupy
+
+
 
   - tqdm
   - zstandard

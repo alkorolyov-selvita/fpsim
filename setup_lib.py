@@ -6,7 +6,6 @@ import os
 
 sys.argv = ['setup.py', 'build_ext', '--inplace']
 
-
 conda_base = os.getenv('CONDA_PREFIX')
 lib_path = os.path.join(conda_base, 'lib')
 rdkit_include_path = os.path.join(conda_base, 'include', 'rdkit')
@@ -15,11 +14,12 @@ rdkit_include_path = os.path.join(conda_base, 'include', 'rdkit')
 # Define the Cython extension
 extensions = [
     Extension(
-        name="bitset_block_range",
-        sources=["bitset_block_range.pyx"],  # Replace with your actual Cython file name
+        name="libfpsim",
+        sources=["libfpsim.pyx"],  # Replace with your actual Cython file name
         extra_compile_args=[
             '-O3',
             '-fopenmp',
+            '-march=native',
         ],
         extra_link_args=[
             '-fopenmp'
@@ -42,15 +42,25 @@ extensions = [
     ),
 ]
 
-# Setup
 setup(
-    name="bitset_block_range",
-    ext_modules=cythonize(extensions, language_level = "3str"),
+    name="libfpsim",
+    ext_modules=cythonize(extensions),  # annotate=True generates HTML report
 )
 
-from bitset_block_range import *
+
+from test_libfpsim import *
 
 check_unsigned_long_size()
 test_bitvec_to_numpy()
-test_bitvec_arr_to_numpy()
-benchmark_bitvec_arr_to_numpy()
+test_bitvec_to_numpy()
+test_tanimoto_matrix_numpy()
+test_tanimoto_matrix_bitvec()
+test_tanimoto_matrix_gpu()
+
+# benchmark_bitvec_arr_to_numpy()
+
+benchmark_tanimoto_matrix_numpy()
+benchmark_tainimoto_matrix_bitvec()
+benchmark_tanimoto_matrix_gpu()
+
+

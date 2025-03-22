@@ -51,22 +51,27 @@ if __name__ == '__main__':
 
     """ ==== TANIMOTO SIMILARITY  ===="""
 
-    df = pd.read_pickle('/home/ergot/projects/tadam-pipeline/data/processed/chembl_activities.pkl.zst')
-    fps = df.fps.sample(10_000, random_state=42)
-    smiles = df.query('uniprot_id == "P00918"').smiles
+    # df = pd.read_pickle('/home/ergot/projects/tadam-pipeline/data/processed/chembl_activities.pkl.zst')
+    # fps = df.fps.sample(10_000, random_state=42)
+    # smiles = df.query('uniprot_id == "P00918"').smiles
 
-    smiles = pd.Series(['CC', 'CO', 'CN', 'CF', 'CS'] * 2000)
+    smiles = pd.Series(['CC', 'CO', 'CN', 'CF', 'CS'] * 100000)
     mols = smiles.apply(MolFromSmiles)
     fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
     fps = pd.Series(fpgen.GetFingerprints(mols.values))
 
     # measure_runtime(tanimoto_similarity_matrix_square, fps, desc='tanimoto_square')
 
-    res = tanimoto_similarity_matrix_square(fps[:1000])
-    rd_res = jaccard_matrix_symm_rdkit(fps[:1000])
-    assert np.allclose(rd_res, res)
+    # res = tanimoto_similarity_matrix_square(fps)
+    # rd_res = jaccard_matrix_symm_rdkit(fps)
+    # assert np.allclose(rd_res, res)
 
-    measure_runtime(tanimoto_similarity_matrix, fps, fps, desc='tanimoto')
+    measure_runtime(tanimoto_similarity_matrix, fps[:1000], fps, desc='tanimoto')
+
+    # measure_runtime(
+    #     tanimoto_similarity_matrix, fps, fps,
+    #     kwargs={'n_jobs': 1}, desc='tanimoto 1'
+    # )
 
     # res = tanimoto_similarity_matrix(fps[:1000], fps[-1000:])
     # rd_res = jaccard_matrix_asymm_rdkit(fps[:1000], fps[-1000:])
