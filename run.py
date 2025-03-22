@@ -5,7 +5,7 @@ import pandas as pd
 from rdkit.Chem import MolFromSmiles, rdFingerprintGenerator
 
 from rdkit.DataStructs.cDataStructs import ExplicitBitVect, BulkTanimotoSimilarity
-from chemivec import (tanimoto_similarity_matrix_square,
+from fpsim import (tanimoto_similarity_matrix_square,
                       tanimoto_similarity_matrix,
                       )
 # from bitset.bitset import Bitset

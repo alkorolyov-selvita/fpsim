@@ -23,8 +23,8 @@ rdkit_include_path = os.path.join(conda_base, 'include', 'rdkit')
 # Define the Cython extension
 extensions = [
     Extension(
-        name="fpsim",
-        sources=["*.pyx"],  # Replace with your actual Cython file name
+        name="bitset_block_range",
+        sources=["bitset_block_range.pyx"],  # Replace with your actual Cython file name
         extra_compile_args=[
             '-O3',
             '-fopenmp',
@@ -53,10 +53,10 @@ extensions = [
 
 # Setup
 setup(
-    name="fpsim",
+    name="bitset_block_range",
     ext_modules=cythonize(extensions, language_level = "3str"),
-    define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
 )
 
-from fpsim import run_tests
-run_tests()
+from bitset_block_range import example
+
+example()
