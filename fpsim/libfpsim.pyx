@@ -13,6 +13,7 @@ from cython.parallel import prange
 from cpython.ref cimport PyObject
 from numpy cimport import_array
 from libc.stdint cimport uint32_t, uint64_t
+from libc.math cimport fabs
 from libc.stdlib cimport exit, malloc, free
 from libc.stdio cimport printf
 from libcpp cimport bool
@@ -169,7 +170,7 @@ def bitvec_to_numpy(py_vec):
     return arr
 
 # Function to convert an array of ExplicitBitVects to a 2D numpy array
-def bitvec_arr_to_numpy(py_vecs):
+cpdef np.ndarray[np.uint64_t, ndim=2] bitvec_arr_to_numpy(py_vecs):
     """
     Convert an array of RDKit ExplicitBitVect objects to a 2D numpy array
     using a custom output iterator for efficient conversion.
@@ -283,9 +284,9 @@ cpdef np.ndarray[np.float32_t, ndim=2] tanimoto_matrix_numpy(uint64_t[:, :] fps1
     Parameters:
     -----------
     fps1 : 2D array of uint64
-        First set of fingerprints
+        First set of packed fingerprints
     fps2 : 2D array of uint64
-        Second set of fingerprints
+        Second set of packed fingerprints
 
     Returns:
     --------
@@ -410,7 +411,8 @@ def tanimoto_matrix_bitvec(
     return res
 
 """ ========= SIMILARITY GPU ON NUMPY FINGERPRINTS =========== """
-def similarity_matrix_cpu(fps1, fps2, popcnts1, popcnts2):
+
+def tanimoto_matrix_cpu(fps1, fps2, popcnts1, popcnts2):
     """Calculate Tanimoto similarity matrix on CPU for verification."""
     n_fps1, fp_len = fps1.shape
     n_fps2 = fps2.shape[0]
@@ -430,7 +432,12 @@ def similarity_matrix_cpu(fps1, fps2, popcnts1, popcnts2):
 
     return result
 
-def _similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2):
+cpdef _tanimoto_matrix_gpu(
+        uint64_t[:,:] fps1,
+        uint64_t[:,:] fps2,
+        uint32_t[:] popcnts1,
+        uint32_t[:] popcnts2,
+):
     """Calculate Tanimoto similarity matrix between two sets of fingerprints using GPU.
 
     Parameters
@@ -450,15 +457,15 @@ def _similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2):
         Similarity matrix with shape (n, m)
     """
     # Get dimensions
-    n_fps1 = len(fps1)
-    n_fps2 = len(fps2)
+    n_fps1 = fps1.shape[0]
+    n_fps2 = fps2.shape[0]
     fp_len = fps1.shape[1]  # Number of uint64 elements per fingerprint
 
     # Transfer data to GPU
     cuda_fps1 = cp.asarray(fps1, dtype=cp.uint64)
     cuda_fps2 = cp.asarray(fps2, dtype=cp.uint64)
-    cuda_popcnts1 = cp.asarray(popcnts1, dtype=cp.uint64)
-    cuda_popcnts2 = cp.asarray(popcnts2, dtype=cp.uint64)
+    cuda_popcnts1 = cp.asarray(popcnts1, dtype=cp.uint32)
+    cuda_popcnts2 = cp.asarray(popcnts2, dtype=cp.uint32)
 
     # Create output matrix
     similarity_matrix = cp.zeros((n_fps1, n_fps2), dtype=cp.float32)
@@ -467,9 +474,9 @@ def _similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2):
     raw_kernel = r"""
     extern "C" __global__
     void taniMatrix(const unsigned long long int* fps1,
-                   const unsigned long long int* popcnts1,
+                   const unsigned int* popcnts1,
                    const unsigned long long int* fps2,
-                   const unsigned long long int* popcnts2,
+                   const unsigned int* popcnts2,
                    float* similarity_matrix,
                    const int fp_len,
                    const int n_fps2) {
@@ -514,7 +521,7 @@ def _similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2):
 
     # Configure grid and block dimensions
     # Each block processes one fingerprint from fps1 against multiple fps2
-    threads_per_block = 256  # Adjust based on GPU capabilities
+    threads_per_block = 512  # Adjust based on GPU capabilities
     blocks_y = (n_fps2 + threads_per_block - 1) // threads_per_block
 
     # Launch the kernel
@@ -536,7 +543,13 @@ def _similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2):
     return cp.asnumpy(similarity_matrix)
 
 
-def similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2, batch_size=1024):
+cpdef np.ndarray[np.float32_t, ndim=2] tanimoto_matrix_gpu(
+        uint64_t[:,:] fps1,
+        uint64_t[:,:] fps2,
+        uint32_t[:] popcnts1,
+        uint32_t[:] popcnts2,
+        int batch_size=1024,
+):
     """Calculate Tanimoto similarity matrix with batching for large datasets.
 
     Parameters
@@ -545,9 +558,9 @@ def similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2, batch_size=1024):
         First set of fingerprints packed as uint64 arrays
     fps2 : numpy.ndarray
         Second set of fingerprints packed as uint64 arrays
-    popcnts1 : numpy.ndarray
+    popcnts1 : numpy.ndarray as uint32
         Popcount values for fps1
-    popcnts2 : numpy.ndarray
+    popcnts2 : numpy.ndarray as uint32
         Popcount values for fps2
     batch_size : int
         Number of fingerprints to process in each batch
@@ -557,8 +570,8 @@ def similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2, batch_size=1024):
     numpy.ndarray
         Similarity matrix
     """
-    n_fps1 = len(fps1)
-    n_fps2 = len(fps2)
+    n_fps1 = fps1.shape[0]
+    n_fps2 = fps2.shape[0]
 
     # Create output matrix
     result_matrix = np.zeros((n_fps1, n_fps2), dtype=np.float32)
@@ -575,7 +588,7 @@ def similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2, batch_size=1024):
             popcnts2_batch = popcnts2[j:batch_end_j]
 
             # Calculate similarity matrix for this batch
-            batch_matrix = _similarity_matrix_gpu(
+            batch_matrix = _tanimoto_matrix_gpu(
                 fps1_batch, fps2_batch, popcnts1_batch, popcnts2_batch
             )
 
@@ -585,6 +598,32 @@ def similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2, batch_size=1024):
     return result_matrix
 
 
+""" ============= PAIRWISE DISTANCE VECTORIZED =============== """
+
+def calc_cross_diff_np(arr, ref_arr):
+    return np.abs(arr[:, np.newaxis] - ref_arr[np.newaxis, :])
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.initializedcheck(False)
+cpdef np.ndarray[np.float32_t, ndim=2] calc_cross_diff_float32(
+        float[:] arr,
+        float[:] ref_arr,
+        int n_jobs=-1,
+):
+    cdef size_t n = arr.shape[0]
+    cdef size_t m = ref_arr.shape[0]
+    cdef size_t i, j
+    cdef int num_threads = min(n_jobs, os.cpu_count()) if n_jobs > 0 else os.cpu_count()
+
+    cdef np.ndarray[np.float32_t, ndim=2] res = np.empty((n, m), dtype=np.float32)
+
+    # for i in prange(n, nogil=True, schedule='dynamic', chunksize=2048, num_threads=n_jobs_cy):
+    for i in prange(n, nogil=True, schedule='static', num_threads=num_threads):
+    # for i in range(n):
+        for j in range(m):
+            res[i, j] = fabs(arr[i] - ref_arr[j])
+    return res
 
 
 """ ================== MISC FUNCTIONS ======================== """

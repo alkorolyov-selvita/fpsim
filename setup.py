@@ -3,31 +3,23 @@ from Cython.Build import cythonize
 import sys
 import numpy
 import os
-from pathlib import Path
 
 sys.argv = ['setup.py', 'build_ext', '--inplace']
-
 
 conda_base = os.getenv('CONDA_PREFIX')
 lib_path = os.path.join(conda_base, 'lib')
 rdkit_include_path = os.path.join(conda_base, 'include', 'rdkit')
 
-# RDKit paths
-# rdkit_include_path = '/home/ergot/miniforge3/pkgs/rdkit-2023.09.6-py310hde493be_2/include/rdkit'
-# lib_path = '/home/ergot/miniforge3/pkgs/rdkit-2023.09.6-py310hde493be_2/lib'
-
-# Set Boost include and library paths
-# boost_include = "/usr/local/include"  # Replace with your Boost include path
-# boost_library_path = "/usr/local/lib"  # Replace with your Boost library path
 
 # Define the Cython extension
 extensions = [
     Extension(
-        name="fpsim",
-        sources=["fpsim.pyx"],  # Replace with your actual Cython file name
+        name="fpsim.libfpsim",
+        sources=["fpsim/libfpsim.pyx"],  # Replace with your actual Cython file name
         extra_compile_args=[
             '-O3',
             '-fopenmp',
+            '-march=native',
         ],
         extra_link_args=[
             '-fopenmp'
@@ -39,7 +31,6 @@ extensions = [
         ],
         library_dirs=[
             lib_path,
-            # boost_library_path
         ],
         libraries=[
             "RDKitRDGeneral",
@@ -51,16 +42,27 @@ extensions = [
     ),
 ]
 
-# Setup
 setup(
-    name="fpsim",
-    ext_modules=cythonize(extensions, language_level = "3str"),
+    name="fpsim.libfpsim",
+    ext_modules=cythonize(extensions),  # annotate=True generates HTML report
 )
 
 
+from test_fpsim import *
+
+check_unsigned_long_size()
+test_bitvec_to_numpy()
+test_bitvec_to_numpy()
+test_calc_cross_diff()
+test_tanimoto_matrix_numpy()
+test_tanimoto_matrix_bitvec()
+test_tanimoto_matrix_gpu()
 
 
-from fpsim import run_tests
-# from libfpsim import test_tanimoto_sim_matrix
+# benchmark_bitvec_arr_to_numpy()
 
-run_tests()
+benchmark_tanimoto_matrix_numpy()
+benchmark_tainimoto_matrix_bitvec()
+benchmark_tanimoto_matrix_gpu()
+
+

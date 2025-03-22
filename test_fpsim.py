@@ -1,9 +1,7 @@
-import numpy as np
-import pandas as pd
 from rdkit.Chem import MolFromSmiles, rdFingerprintGenerator
 from rdkit.DataStructs import BulkTanimotoSimilarity
 
-from libfpsim import *
+from fpsim.libfpsim import *
 
 def timeit(func, *args, kwargs=None, n_runs=7, desc=None):
     """Measure the runtime of a function over multiple runs."""
@@ -120,8 +118,8 @@ def test_tanimoto_matrix_gpu():
     ], dtype=np.uint64)
 
     # Calculate population counts manually for clarity
-    popcnts1 = np.array([4, 4, 4], dtype=np.uint64)
-    popcnts2 = np.array([4, 4], dtype=np.uint64)
+    popcnts1 = np.array([4, 4, 4], dtype=np.uint32)
+    popcnts2 = np.array([4, 4], dtype=np.uint32)
 
     # Expected results (manually calculated)
     # For fps1[0] and fps2[0]:
@@ -140,10 +138,10 @@ def test_tanimoto_matrix_gpu():
     ], dtype=np.float32)
 
     # Calculate using CPU implementation
-    cpu_result = similarity_matrix_cpu(fps1, fps2, popcnts1, popcnts2)
+    cpu_result = tanimoto_matrix_cpu(fps1, fps2, popcnts1, popcnts2)
 
     # Calculate using GPU implementation
-    gpu_result = similarity_matrix_gpu(fps1, fps2, popcnts1, popcnts2)
+    gpu_result = tanimoto_matrix_gpu(fps1, fps2, popcnts1, popcnts2)
 
     # Assert results match within tolerance
     assert np.allclose(cpu_result, expected, rtol=1e-5, atol=1e-5), "CPU result doesn't match expected"
@@ -208,10 +206,17 @@ def test_bitvec_arr_to_numpy():
     print('test_bitvec_arr_to_numpy passed')
 
 
+def test_calc_cross_diff():
+    np.random.seed(42)
+    a1 = np.random.random(10).astype(np.float32)
+    a2 = np.random.random(20).astype(np.float32)
+
+    assert np.allclose(calc_cross_diff_np(a1, a2), calc_cross_diff_float32(a1, a2))
+    print('test_calc_cross_diff passed')
+
+
 # Simple benchmark function
 def benchmark_bitvec_arr_to_numpy():
-    import random
-    from tqdm import trange
     from rdkit.Chem import DataStructs
 
     # Function to create random bit vectors
@@ -243,28 +248,12 @@ def benchmark_tanimoto_matrix_numpy():
     fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
     fps = pd.Series(fpgen.GetFingerprints(mols.values))
 
-    # measure_runtime(tanimoto_similarity_matrix_square, fps, desc='tanimoto_square')
-
 
     fps_packed = bitvec_arr_to_numpy(fps)
     timeit(
         tanimoto_matrix_numpy, fps_packed, fps_packed,
         kwargs={'n_jobs': 1}, desc='tanimoto numpy'
     )
-
-    # timeit(
-    #     get_popcounts, np.concatenate([fps_packed] * 1000), desc='pop counts'
-    # )
-    # timeit(
-    #     tanimoto_similarity_matrix_chunked, fps_packed, fps_packed,
-    #     kwargs={'n_jobs': 1}, desc='chunked 1'
-    # )
-
-
-    # timeit(
-    #     tanimoto_similarity_matrix, fps_packed, fps_packed,
-    #     kwargs={'n_jobs': -1}, desc='tanimoto -1'
-    # )
 
 
 def benchmark_tainimoto_matrix_bitvec():
@@ -273,7 +262,7 @@ def benchmark_tainimoto_matrix_bitvec():
     mols = smiles.apply(MolFromSmiles)
     fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
     fps = pd.Series(fpgen.GetFingerprints(mols.values))
-    timeit(tanimoto_matrix_bitvec, fps, fps, desc='tanimoto bitvec')
+    timeit(tanimoto_matrix_bitvec, fps, fps, desc='tanimoto bitvec 4000 x 4000')
 
 
 def benchmark_tanimoto_matrix_gpu():
@@ -283,9 +272,52 @@ def benchmark_tanimoto_matrix_gpu():
     fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
     fps = pd.Series(fpgen.GetFingerprints(mols.values))
 
-    fps_packed = bitvec_arr_to_numpy(fps)
-    popcounts = get_popcounts(fps_packed)
+
+    fps_np = bitvec_arr_to_numpy(fps)
+    popcounts = get_popcounts(fps_np)
+
     timeit(
-        similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts, desc='tanimoto gpu',
+        tanimoto_matrix_gpu,
+        fps_np, fps_np,
+        popcounts, popcounts,
+        desc='tanimoto gpu 4000 x 4000'
     )
+
+
+    # timeit(
+    #     tanimoto_matrix_gpu,
+    #     fps_packed[:2000], np.concatenate([fps_packed] * 50),
+    #     popcounts, np.concatenate([popcounts] * 50),
+    #     kwargs={'batch_size': 100_000},
+    #     desc='tanimoto gpu [2_000, 500_000]'
+    # )
+
+    # timeit(
+    #     similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 128}, desc='tanimoto gpu 128',
+    # )
+    # timeit(
+    #     similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 256}, desc='tanimoto gpu 256',
+    # )
+    # timeit(
+    #     tanimoto_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 512}, desc='tanimoto gpu 512',
+    # )
+    # timeit(
+    #     tanimoto_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 1024}, desc='tanimoto gpu 1024',
+    # )
+    # timeit(
+    #     similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 2048}, desc='tanimoto gpu 2048',
+    # )
+    # timeit(
+    #     similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 4096}, desc='tanimoto gpu 4096',
+    # )
+    # timeit(
+    #     similarity_matrix_gpu, fps_packed, fps_packed, popcounts, popcounts,
+    #     kwargs={'batch_size': 8192}, desc='tanimoto gpu 8192',
+    # )
 
